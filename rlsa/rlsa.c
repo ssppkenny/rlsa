@@ -1,288 +1,224 @@
-#define PY_SSIZE_T_CLEAN
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
-#include <Python.h>
-#include "numpy/ndarraytypes.h"
-#include "numpy/ufuncobject.h"
-#include "numpy/npy_3kcompat.h"
-#include <math.h>
+#include<Python.h>
+#include<numpy/arrayobject.h>
+#include<stdbool.h>
 
-/**
- * Apply the RLS algorithm horizontally on the given image.
- * This function eliminates horizontal white runs whose lengths are smaller than the given value.
- *
- * Args:
- *     img: Image on which to apply the rlsa horizontal process (gets modified).
- *     dims: Number of rows and columns in the image.
- *     hsv: The treshold smoothing value.
- */
-static void rlsa_horizontal(uint8_t* img, long int rows, long int cols, int hsv) {
-  for(int i = 0; i < rows; i++) {
-    int last_black_px = 0;  // Index of the last 0 found
-    for(int j = 0; j < cols; j++) {
-      if (img[i*cols + j] == 0) {
-        if (j-last_black_px <= hsv && last_black_px != 0)   // last_black_px != 0 is to avoid linking borders to the text.
-          for(int k = last_black_px; k < j; k++)
-            img[i*cols + k] = 0;
-        last_black_px = j;
-      }
+/*
+ Function : get_horizontal_smeared_image
+ Parameters : image - 1d array representing the 2d image
+                         rows - number of rows in the image
+                         cols - number of columns in the image
+                         range - minimum distance required between 2 black pixels if they are not to be colored black
+ Return Value : 1d array representing the smeared image
+ Description : performs horizontal smearing on the image
+ Example : int* out = get_horizontal_image(image, 50, 50, 10);
+
+*/
+int* get_horizontal_smeared_image(int* image, long int rows, long int cols, int range)
+{
+    // create a variable to store the output, and allocated memory to it
+    int* smeared = (int*)malloc(rows * cols * sizeof(int));
+
+    // repeat the following for all rows in the image
+    for(int i = 0; i < rows; ++i)
+    {
+         int j = 0;
+        // find the first pixel in this image which is 0
+        while(image[i * cols + j] != 0 && j < cols)
+        {
+            // copy the value of this pixel in the smeared image variable
+            smeared[i * cols + j] = 255;
+            ++j;
+        }
+
+        // store the position of this pixel in a variable, to be used when calculating the range
+        int prev_black = j;
+
+        // repeat the following for the remaining pixels
+        for(; j < cols; ++j)
+        {
+            // copy the value of current pixel in the smeared image variable
+            smeared[i * cols + j] = image[ i * cols + j];
+
+            // if the current pixel is black ( 0 ),
+            if( image[i * cols + j] == 0 )
+            {
+                // if the distance from this pixel to the previous black pixel is less than the required range,
+                if( j - prev_black <= range )
+                {
+                    // mark all pixels from the previous black pixel to current pixel as black
+                    for(int k = prev_black; k < j; ++k)
+                        smeared[i * cols + k] = 0;
+                }
+
+                // store the position of current black pixel
+                prev_black = j;
+            }
+        }
     }
-  }
+
+   // return the smeared image variable
+    return smeared;
 }
 
-/**
- * Same as above, but vertically.
- */
-static void rlsa_vertical(uint8_t* img, long int rows, long int cols, int vsv) {
-  for(int j = 0; j < cols; j++) {
-    int last_black_px = 0;
-    for(int i = 0; i < rows; i++)
-      if (img[i*cols + j] == 0) {
-        if (i-last_black_px <= vsv && last_black_px != 0)
-          for(int k = last_black_px; k < i; k++)
-            img[k*cols + j] = 0;
-        last_black_px = i;
-      }
-  }
+/*
+
+ Function : get_vertical_smeared_image
+ Parameters : image - 1d array representing the 2d image
+                         rows - number of rows in the image
+                         cols - number of columns in the image
+                         range - minimum distance required between 2 black pixels if they are not to be colored black
+ Return Value : 1d array representing the smeared image
+ Description : performs vertical smearing on the image
+ Example : int* out = get_vertical_image(image, 50, 50, 10);
+
+*/
+int* get_vertical_smeared_image(int* image, long int rows, long int cols, int range)
+{
+    // create a variable to store the output, and allocated memory to it
+    int* smeared = (int*)malloc(rows * cols * sizeof(int));
+
+    // repeat the following for all rows in the image
+    for(int i = 0; i < cols; ++i)
+    {
+         int j = 0;
+        // find the first pixel in this image which is 0
+        while(j < rows && image[j * cols + i] != 0 )
+        {
+            // copy the value of this pixel in the smeared image variable
+            smeared[j * cols + i] = 255;
+            ++j;
+        }
+
+        // store the position of this pixel in a variable, to be used when calculating the range
+        int prev_black = j;
+
+        // repeat the following for the remaining pixels
+        for(; j < rows; ++j)
+        {
+            // copy the value of current pixel in the smeared image variable
+            smeared[j * cols + i] = image[ j * cols + i];
+
+            // if the current pixel is black ( 0 ),
+            if( image[j * cols + i] == 0 )
+            {
+                // if the distance from this pixel to the previous black pixel is less than the required range,
+                if( j - prev_black <= range )
+                {
+                    // mark all pixels from the previous black pixel to current pixel as black
+                    for(int k = prev_black; k < j; ++k)
+                        smeared[k * cols + i] = 0;
+                }
+
+                // store the position of current black pixel
+                prev_black = j;
+            }
+        }
+    }
+
+   // return the smeared image variable
+    return smeared;
 }
 
-/**
- * Apply the Run Length Smoothing Algorithm on the given image.
- *
- * Args:
- *     img: Image on which to apply the rlsa process (gets modified).
- *     dims: Number of rows and columns in the image.
- *     hsv: The horizontal treshold smoothing value.
- *     vsv: The vertical treshold smoothing value.
- *     ahsv: Second horizontal threshold, for the (optional) second horizontal pass.
- */
-static void rlsa(uint8_t* img, npy_intp* dims, int hsv, int vsv, int ahsv) {
-  long int rows = dims[0];
-  long int cols = dims[1];
+/*
 
-  uint8_t horizontal_rlsa_img[rows * cols];
-  memcpy(horizontal_rlsa_img, img, sizeof(horizontal_rlsa_img));
-  if (hsv != 0) rlsa_horizontal(horizontal_rlsa_img, rows, cols, hsv);
-  if (vsv != 0) rlsa_vertical(img, rows, cols, vsv);
+ Function : rlsa_smear_c
+ Parameters : image - Python object representation of the numpy array image
+                         horizontal - boolean value indicating whether horizontal smearing has to be performed
+                         vertical - boolean value indicating whether vertical smearing has to be performed
+                         range - Python tuple indicating values for horizontal and vertical range. Can be of length 0, 1 or 2
+ Return Value : Python Object representation of numpy array containing the smeared image
+ Description : performs horizontal and / or vertical run-length smearing on the input image
 
-  // AND operation between the vetical and horizontal results.
-  for(int i = 0; i < rows; i++)
-    for(int j = 0; j < cols; j++)
-      if (img[i*cols + j] == 0 || horizontal_rlsa_img[i*cols + j] == 0)
-        img[i*cols + j] = 0;
+*/
+PyObject* rlsa_smear_c(PyObject* self, PyObject* args)
+{
+    // create a variable to hold the image object input to the function
+    PyArrayObject* image = NULL;
+    // python tuple containing range value for horizontal and vertical smearing respectivaly
+    int range = 0;
+    // boolean values to indicate whether horizontal and / or vertical smearing is to be performed
+    bool horizontal, vertical;
 
-  if (ahsv != 0) rlsa_horizontal(img, rows, cols, ahsv);
-}
+    // parse the input. if it is not in the given format, return from the function
+    if( !PyArg_ParseTuple(args, "Obbi", &image,&horizontal, &vertical, &range) )
+        return Py_None;
 
+    // check if the input image passed is a python numpy array object
+    if( ! PyArray_Check(image))
+        return Py_None;
 
-static PyArrayObject *rlsa_wrapper(PyObject *self, PyObject *args, PyObject *kwargs) {
-  import_array();
-  import_umath();
+    // if range for smearing is negative, make it zero
+    if( range < 0 )
+        range = 0;
 
-  PyArrayObject* out_img = NULL;
-  PyArrayObject* in_img = NULL;
-  int vsv, hsv, ahsv;
-  static char *kwlist[] = {"in_img", "hsv", "vsv", "ahsv", NULL};
+    // change the type of the array. this way, the function works for input with any dtype
+    image = (PyArrayObject*) PyArray_Cast(image, NPY_INT32);
 
-  ahsv = 0;
-  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "Oii|i", kwlist, &in_img, &hsv, &vsv, &ahsv))
-    goto except;
-  if (!PyArray_Check(in_img)) {
-    PyErr_Format(PyExc_TypeError,
-                 "Argument \"in_img\" to %s must be a numpy array object not a \"%s\"",
-                 __FUNCTION__, Py_TYPE(in_img)->tp_name);
-    goto except;
-  }
+    // store the dimensions ( rows and cols ) of the input image
+    npy_intp* dims = PyArray_DIMS(image);
 
-  in_img = (PyArrayObject*) PyArray_Cast(in_img, NPY_UINT8);
+    // create a pointer to store the array data of the image
+    int* data = (int*)PyArray_DATA(image);
 
-  int nb_dims = PyArray_NDIM(in_img);  // number of dimensions
-  if (nb_dims != 2) PyErr_SetString(PyExc_ValueError, "Numpy array must be 2D.");
-  npy_intp* dims = PyArray_DIMS(in_img);  // npy_intp array of length nb_dims showing length in each dim.
-  uint8_t* in_data = (uint8_t*)PyArray_DATA(in_img);  // Pointer to data.
+    // create a pointer to store the output of run-length smearing
+    int* out = NULL;
 
-  // Copy the input image data to an output image (that we will modify from now on).
-  uint8_t* out_data = (uint8_t*)malloc(dims[0] * dims[1] * sizeof(uint8_t));  // uint8_t out_data[dims[0] * dims[1]];
-  memcpy(out_data, in_data, dims[0] * dims[1] * sizeof(uint8_t));
+    // if the user wants to perform horizontal and vertical smearing on the image
+    if( horizontal == true && vertical == true )
+    {
+        // perform horizontal smearing on the input image and store the result in out
+        out = get_horizontal_smeared_image(data, dims[0], dims[1], range);
+        // perform vertical smearing on out and store this result in out
+        out = get_vertical_smeared_image(out, dims[0], dims[1], range);
+    }
+    // if the user wants to perform only horizontal smearing
+    else if( horizontal == true && vertical == false )
+    {
+        // perform horizontal smearing on the input image and store the result in out
+        out = get_horizontal_smeared_image(data, dims[0], dims[1], range);
+     }
+     // if the user wants to perform only vertical smearing
+    else if( horizontal == false && vertical == true )
+    {
+        // perform vertical smearing on input image and store the result in out
+        out = get_vertical_smeared_image(data, dims[0], dims[1], range);
+    }
+    // if the user wants to perform neither of the above
+    else
+    {
+        // store the input image in out as it is
+        out = data;
+    }
 
-  rlsa(out_data, dims, hsv, vsv, ahsv);
+    // create a python numpy array from the out array
+    PyArrayObject* output = (PyArrayObject*) PyArray_SimpleNewFromData(2, dims, NPY_INT32, (void*)out);
 
-  // create a python numpy array from the out array
-  out_img = (PyArrayObject*) PyArray_SimpleNewFromData(2, dims, NPY_UINT8, out_data);
-  PyArray_ENABLEFLAGS(out_img, NPY_ARRAY_OWNDATA);  // To free memory as soon as the ndarray is deallocated.
-
-  assert(!PyErr_Occurred());  /* Alternative check: if(PyErr_Occurred()) goto except; */
-  assert(out_img);
-  goto finally;
- except:
-  Py_XDECREF(out_img);
-  assert(PyErr_Occurred());
-  out_img = NULL;
- finally:
-  return out_img;
-}
-
-
-static PyArrayObject *rlsa_wrapper_horizontal(PyObject *self, PyObject *args) {
-  import_array();
-  import_umath();
-
-  PyArrayObject* in_img = NULL;
-  int hsv;
-
-  if (!PyArg_ParseTuple(args, "Oi", &in_img, &hsv))
-    return NULL;
-  if (!PyArray_Check(in_img)) {
-    PyErr_Format(PyExc_TypeError,
-                 "Argument \"in_img\" to %s must be a numpy array object not a \"%s\"",
-                 __FUNCTION__, Py_TYPE(in_img)->tp_name);
-    goto except;
-  }
-
-  in_img = (PyArrayObject*) PyArray_Cast(in_img, NPY_UINT8);
-
-  int nb_dims = PyArray_NDIM(in_img);  // number of dimensions
-  if (nb_dims != 2) PyErr_SetString(PyExc_ValueError, "Numpy array must be 2D.");
-  npy_intp* dims = PyArray_DIMS(in_img);  // npy_intp array of length nb_dims showing length in each dim.
-  uint8_t* in_data = (uint8_t*)PyArray_DATA(in_img);  // Pointer to data.
-
-  // Copy the input image data to an output image (that we will modify from now on).
-  uint8_t* out_data = (uint8_t*)malloc(dims[0] * dims[1] * sizeof(uint8_t));  // uint8_t out_data[dims[0] * dims[1]];
-  memcpy(out_data, in_data, dims[0] * dims[1] * sizeof(uint8_t));
-
-  rlsa_horizontal(out_data, dims[0], dims[1], hsv);
-
-  // create a python numpy array from the out array
-  PyArrayObject* out_img = (PyArrayObject*) PyArray_SimpleNewFromData(2, dims, NPY_UINT8, out_data);
-
-  assert(!PyErr_Occurred());
-  assert(out_img);
-  goto finally;
- except:
-  Py_XDECREF(out_img);
-  assert(PyErr_Occurred());
-  out_img = NULL;
- finally:
-  return out_img;
-}
-
-
-static PyArrayObject *rlsa_wrapper_vertical(PyObject *self, PyObject *args) {
-  import_array();
-  import_umath();
-
-  PyArrayObject* in_img = NULL;
-  int vsv;
-
-  if (!PyArg_ParseTuple(args, "Oi", &in_img, &vsv))
-    return NULL;
-  if (!PyArray_Check(in_img)) {
-    PyErr_Format(PyExc_TypeError,
-                 "Argument \"in_img\" to %s must be a numpy array object not a \"%s\"",
-                 __FUNCTION__, Py_TYPE(in_img)->tp_name);
-    goto except;
-  }
-
-  in_img = (PyArrayObject*) PyArray_Cast(in_img, NPY_UINT8);
-
-  int nb_dims = PyArray_NDIM(in_img);  // number of dimensions
-  if (nb_dims != 2) PyErr_SetString(PyExc_ValueError, "Numpy array must be 2D.");
-  npy_intp* dims = PyArray_DIMS(in_img);  // npy_intp array of length nb_dims showing length in each dim.
-  uint8_t* in_data = (uint8_t*)PyArray_DATA(in_img);  // Pointer to data.
-
-  // Copy the input image data to an output image (that we will modify from now on).
-  uint8_t* out_data = (uint8_t*)malloc(dims[0] * dims[1] * sizeof(uint8_t));  // uint8_t out_data[dims[0] * dims[1]];
-  memcpy(out_data, in_data, dims[0] * dims[1] * sizeof(uint8_t));
-
-  rlsa_vertical(out_data, dims[0], dims[1], vsv);
-
-  // create a python numpy array from the out array
-  PyArrayObject* out_img = (PyArrayObject*) PyArray_SimpleNewFromData(2, dims, NPY_UINT8, out_data);
-
-  assert(!PyErr_Occurred());
-  assert(out_img);
-  goto finally;
- except:
-  Py_XDECREF(out_img);
-  assert(PyErr_Occurred());
-  out_img = NULL;
- finally:
-  return out_img;
+    // return this python array object
+    return PyArray_Return(output);
 }
 
 
-PyDoc_STRVAR(rlsa_doc,
-             "rlsa(img, hsv, vsv, ahsv=0, /)\n"
-             "--\n\n"
-             "Applies the Run Length Smoothing Algorithm on an image.\n"
-             "\n"
-             "Args:\n"
-             "    in_img (npt.NDArray[np.uint8]): The black and white input image.\n"
-             "    hsv (int): The horizontal threshold, i.e., the number of white pixels needed to 'separate' two black pixels.\n"
-             "    vsv (int): The vertical threshold.\n"
-             "    ahsv (int): Second horizontal threshold, for the (optional) second horizontal pass.\n"
-             "\n"
-             "Returns:\n"
-             "    out_img (npt.NDArray[np.uint8]): New image with the rlsa applied on it.\n"
-             "\n"
-             "Example:\n"
-             "    >>> img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)\n"
-             "    >>> _, binary_img = cv2.threshold(img, 190, 255, cv2.THRESH_BINARY)\n"
-             "    >>> out_img = rlsa(binary_img, 25, 25, 3)\n"
-             );
+//########        MODULE LEVEL FUNCTIONS        ########
 
-PyDoc_STRVAR(rlsa_horizontal_doc,
-             "rlsa_horizontal(in_img, hsv, /)\n"
-             "--\n\n"
-             "Applies the horizontal component of RLSA on an image.\n"
-             "\n"
-             "Args:\n"
-             "    in_img (npt.NDArray[np.uint8]): The black and white input image.\n"
-             "    hsv (int): The horizontal threshold, i.e., the number of white pixels needed to 'separate' two black pixels.\n"
-             "\n"
-             "Returns:\n"
-             "    out_img (npt.NDArray[np.uint8]): New image with the horizontal rlsa applied on it.\n"
-             "\n"
-             "Example:\n"
-             "    >>> img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)\n"
-             "    >>> _, binary_img = cv2.threshold(img, 190, 255, cv2.THRESH_BINARY)\n"
-             "    >>> out_img = rlsa_horizontal(binary_img, 25)\n"
-             );
-
-PyDoc_STRVAR(rlsa_vertical_doc,
-             "rlsa_vertical(in_img, vsv, /)\n"
-             "--\n\n"
-             "Applies the vertical component of RLSA on an image.\n"
-             "\n"
-             "Args:\n"
-             "    in_img (npt.NDArray[np.uint8]): The black and white input image.\n"
-             "    vsv (int): The vertical threshold, i.e., the number of white pixels needed to 'separate' two black pixels.\n"
-             "\n"
-             "Returns:\n"
-             "    out_img (npt.NDArray[np.uint8]): New image with the vertical rlsa applied on it.\n"
-             "\n"
-             "Example:\n"
-             "    >>> img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)\n"
-             "    >>> _, binary_img = cv2.threshold(img, 190, 255, cv2.THRESH_BINARY)\n"
-             "    >>> out_img = rlsa_vertical(binary_img, 25)\n"
-             );
-
-static PyMethodDef RLSAMethods[] = {
-  {"rlsa",  (PyCFunction)rlsa_wrapper, METH_VARARGS | METH_KEYWORDS, rlsa_doc},
-  {"rlsa_horizontal",  rlsa_wrapper_horizontal, METH_VARARGS, rlsa_horizontal_doc},
-  {"rlsa_vertical",  rlsa_wrapper_vertical, METH_VARARGS, rlsa_vertical_doc},
-  {NULL, NULL, 0, NULL}  /* Sentinel */
+// method definitions
+static PyMethodDef methods[] = {
+  { "rlsa", rlsa_smear_c, METH_VARARGS, "performs run-length smearing on the image (horizontal and/or vertical)"},
+  { NULL, NULL, 0, NULL }
 };
 
-
-static struct PyModuleDef rlsa_module = {
-  PyModuleDef_HEAD_INIT,
-  "rlsa",   /* Name of module */
-  "Run Length Smoothing Algorithm package.",  // Module description.
-  -1,       /* Size of per-interpreter state of the module, or -1 if the module keeps state in global variables. */
-  RLSAMethods
+// module definition
+static struct PyModuleDef rlsa = {
+    PyModuleDef_HEAD_INIT,
+    "rlsa",
+    "A Python module that caculates the run-length smearing of an image and returns it",
+    -1,
+    methods
 };
 
-
+// create the module
 PyMODINIT_FUNC PyInit_rlsa(void) {
-  return PyModule_Create(&rlsa_module);
+  Py_Initialize();
+  import_array();
+  return PyModule_Create(&rlsa);
 }
