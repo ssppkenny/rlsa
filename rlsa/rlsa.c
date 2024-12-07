@@ -165,7 +165,7 @@ PyObject* rlsa_smear_c(PyObject* self, PyObject* args)
     printf("PyArray_DIMS\n");
     npy_intp* dims = PyArray_DIMS(image);
 
-    printf("PyArray_DATA\n");/ 
+    printf("PyArray_DATA\n"); 
     // create a pointer to store the array data of the image
     int* data = (int*)PyArray_DATA(image);
 
