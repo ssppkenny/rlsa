@@ -24,7 +24,7 @@ int* get_horizontal_smeared_image(int* image, long int rows, long int cols, int 
     {
          int j = 0;
         // find the first pixel in this image which is 0
-        while(image[i * cols + j] != 0 && j < cols)
+        while( j < cols && image[i * cols + j] != 0)
         {
             // copy the value of this pixel in the smeared image variable
             smeared[i * cols + j] = 255;
