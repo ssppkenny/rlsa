@@ -133,7 +133,6 @@ int* get_vertical_smeared_image(int* image, long int rows, long int cols, int ra
 */
 PyObject* rlsa_smear_c(PyObject* self, PyObject* args)
 {
-    printf("beginning rlsa_smear_c\n");
     // create a variable to hold the image object input to the function
     PyArrayObject* image = NULL;
     // python tuple containing range value for horizontal and vertical smearing respectivaly
@@ -142,13 +141,11 @@ PyObject* rlsa_smear_c(PyObject* self, PyObject* args)
     bool horizontal, vertical;
 
     // parse the input. if it is not in the given format, return from the function
-    printf("PyArg_ParseTuple\n");
     if( !PyArg_ParseTuple(args, "Obbi", &image,&horizontal, &vertical, &range) )
         return Py_None;
 
     // check if the input image passed is a python numpy array object
 
-    printf("PyArray_Check\n");
     if( ! PyArray_Check(image))
         return Py_None;
 
@@ -157,15 +154,12 @@ PyObject* rlsa_smear_c(PyObject* self, PyObject* args)
         range = 0;
 
     // change the type of the array. this way, the function works for input with any dtype
-    printf("PyArray_Cast\n");
     image = (PyArrayObject*) PyArray_Cast(image, NPY_INT32);
 
     // store the dimensions ( rows and cols ) of the input image
     
-    printf("PyArray_DIMS\n");
     npy_intp* dims = PyArray_DIMS(image);
 
-    printf("PyArray_DATA\n"); 
     // create a pointer to store the array data of the image
     int* data = (int*)PyArray_DATA(image);
 
@@ -176,24 +170,20 @@ PyObject* rlsa_smear_c(PyObject* self, PyObject* args)
     if( horizontal == true && vertical == true )
     {
         // perform horizontal smearing on the input image and store the result in out
-        printf("horizontal\n");
         out = get_horizontal_smeared_image(data, dims[0], dims[1], range);
         // perform vertical smearing on out and store this result in out
-        printf("vertical\n");
         out = get_vertical_smeared_image(out, dims[0], dims[1], range);
     }
     // if the user wants to perform only horizontal smearing
     else if( horizontal == true && vertical == false )
     {
         // perform horizontal smearing on the input image and store the result in out
-        printf("horizontal\n");
         out = get_horizontal_smeared_image(data, dims[0], dims[1], range);
      }
      // if the user wants to perform only vertical smearing
     else if( horizontal == false && vertical == true )
     {
         // perform vertical smearing on input image and store the result in out
-        printf("vertical\n");
         out = get_vertical_smeared_image(data, dims[0], dims[1], range);
     }
     // if the user wants to perform neither of the above
@@ -204,7 +194,6 @@ PyObject* rlsa_smear_c(PyObject* self, PyObject* args)
     }
 
     // create a python numpy array from the out array
-    printf("PyArray_SimpleNewFromData");
     PyArrayObject* output = (PyArrayObject*) PyArray_SimpleNewFromData(2, dims, NPY_INT32, (void*)out);
 
     // return this python array object
